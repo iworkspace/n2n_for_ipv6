@@ -83,6 +83,20 @@ static void check_known_peer_sock_change (n2n_edge_t *eee,
 
 /* ************************************** */
 
+    n2n_addr_t loopback_addr = {
+    	.family = PF_INET,
+	//.in_addr = htonl(INADDR_LOOPBACK),
+	//.in_addr = htonl(0x7f000001),
+	.in_addr = 0x0100007f,
+    };
+
+
+    n2n_addr_t any_addr = {
+    	.family = PF_INET,
+	.in_addr = 0,
+    };
+
+
 int edge_verify_conf (const n2n_edge_conf_t *conf) {
 
     if(conf->community_name[0] == 0)
@@ -227,46 +241,60 @@ void reset_sup_attempts (n2n_edge_t *eee) {
 // detect local IP address by probing a connection to the supernode
 static int detect_local_ip_address (n2n_sock_t* out_sock, const n2n_edge_t* eee) {
 
-    struct sockaddr_in local_sock;
     struct sockaddr_in sn_sock;
-    socklen_t sock_len = sizeof(local_sock);
+    struct sockaddr_in6 sn_sock_6;
+    struct sockaddr *sock_ptr;
+    char local_sock[128];
+    socklen_t sock_len;
     SOCKET probe_sock;
     int ret = 0;
 
     out_sock->family = AF_INVALID;
 
-    // always detetct local port even/especially if chosen by OS...
-    if((getsockname(eee->sock, (struct sockaddr *)&local_sock, &sock_len) == 0)
-    && (local_sock.sin_family == AF_INET)
-    && (sock_len == sizeof(local_sock)))
-        // remember the port number
-        out_sock->port = ntohs(local_sock.sin_port);
-    else
-        ret = -1;
+    // ipv6 detect first.
+    if(sock_len = sizeof(sn_sock_6) &&
+		    (getsockname(eee->sock, (struct sockaddr *)&sn_sock_6, &sock_len) == 0) &&
+		    (sock_len == sizeof(sn_sock_6)) &&
+     	(sn_sock_6.sin6_family == AF_INET6) ){
+   	out_sock->port = ntohs(sn_sock_6.sin6_port); 
+	out_sock->family = AF_INET6;
+    }else if(sock_len = sizeof(sn_sock) && 
+		    (getsockname(eee->sock, (struct sockaddr *)&sn_sock, &sock_len) == 0) &&
+		    (sock_len == sizeof(sn_sock)) &&
+     	(sn_sock.sin_family == AF_INET) ){
+   	out_sock->port = ntohs(sn_sock.sin_port); 
+	out_sock->family = AF_INET;
+    }else{
+	    return -1;
+    }
 
     // probe for local IP address
-    probe_sock = socket(PF_INET, SOCK_DGRAM, 0);
+    probe_sock = socket(out_sock->family, SOCK_DGRAM, 0);
     // connecting the UDP socket makes getsockname read the local address it uses to connect (to the sn in this case);
     // we cannot do it with the real (eee->sock) socket because socket does not accept any conenction from elsewhere then,
     // e.g. from another edge instead of the supernode; as re-connecting to AF_UNSPEC might not work to release the socket
     // on non-UNIXoids, we use a temporary socket
+    sock_ptr = out_sock->family == AF_INET?(struct sockaddr*)&sn_sock:(struct sockkaddr*)&sn_sock_6;
+    sock_len = out_sock->family == AF_INET?sizeof(sn_sock):sizeof(sn_sock_6);
     if((int)probe_sock >= 0) {
-        fill_sockaddr((struct sockaddr*)&sn_sock, sizeof(sn_sock), &eee->curr_sn->sock);
-        if(connect(probe_sock, (struct sockaddr *)&sn_sock, sizeof(sn_sock)) == 0) {
-            if((getsockname(probe_sock, (struct sockaddr *)&local_sock, &sock_len) == 0)
-            && (local_sock.sin_family == AF_INET)
-            && (sock_len == sizeof(local_sock))) {
-                memcpy(&(out_sock->addr.v4), &(local_sock.sin_addr.s_addr), IPV4_SIZE);
-            } else
+        fill_sockaddr(sock_ptr,sock_len, &eee->curr_sn->sock);
+        if(connect(probe_sock, sock_ptr, sock_len) == 0) {
+	    sock_ptr = (struct sockaddr *)&local_sock; 
+            if(getsockname(probe_sock,sock_ptr, &sock_len)){
+		ret = -3;		    
+	    }else if(sock_ptr->sa_family == AF_INET && (sock_len == sizeof(sn_sock))) {
+                memcpy(&(out_sock->addr.v4), &(((struct sockaddr_in*)sock_ptr)->sin_addr.s_addr), IPV4_SIZE);
+            }else if(sock_ptr->sa_family == AF_INET6 && (sock_len == sizeof(sn_sock_6))) {
+                memcpy(&(out_sock->addr.v6), &(((struct sockaddr_in6*)sock_ptr)->sin6_addr),  IPV6_SIZE);
+            }else{
                 ret = -4;
-        } else
+	    }
+        }else{
             ret = -3;
+	}
         closesocket(probe_sock);
     } else
         ret = -2;
-
-    out_sock->family = AF_INET;
-
     return ret;
 }
 
@@ -277,6 +305,7 @@ int supernode_connect (n2n_edge_t *eee) {
 
     int sockopt;
     struct sockaddr_in sn_sock;
+    struct sockaddr_in6 sn_sock6;
     n2n_sock_t local_sock;
     n2n_sock_str_t sockbuf;
 
@@ -292,7 +321,7 @@ int supernode_connect (n2n_edge_t *eee) {
                                      (eee->conf.connect_tcp) ? 0 : eee->conf.local_port);
 
         eee->sock = open_socket((eee->conf.connect_tcp) ?  0 : eee->conf.local_port,
-                                 eee->conf.bind_address,
+                                 &eee->conf.bind_address,
                                  eee->conf.connect_tcp);
 
         if(eee->sock < 0) {
@@ -520,7 +549,6 @@ n2n_edge_t* edge_init (const n2n_edge_conf_t *conf, int *rv) {
     //edge_init_success:
     *rv = 0;
     return(eee);
-
 edge_init_error:
     if(eee)
         free(eee);
@@ -1049,7 +1077,7 @@ static int check_sock_ready (n2n_edge_t *eee) {
 
 /** Send a datagram to a socket file descriptor */
 static ssize_t sendto_fd (n2n_edge_t *eee, const void *buf,
-                          size_t len, struct sockaddr_in *dest,
+                          size_t len, struct sockaddr *dest,
                           const n2n_sock_t * n2ndest) {
 
     ssize_t sent = 0;
@@ -1059,7 +1087,7 @@ static ssize_t sendto_fd (n2n_edge_t *eee, const void *buf,
     }
 
     sent = sendto(eee->sock, buf, len, 0 /*flags*/,
-                  (struct sockaddr *)dest, sizeof(struct sockaddr_in));
+                  (struct sockaddr *)dest, dest->sa_family == PF_INET6?sizeof(struct sockaddr_in6):sizeof(struct sockaddr_in));
 
     if(sent != -1) {
         // sendto success
@@ -1116,7 +1144,9 @@ err_out:
 static void sendto_sock (n2n_edge_t *eee, const void * buf,
                             size_t len, const n2n_sock_t * dest) {
 
-    struct sockaddr_in peer_addr;
+    //struct sockaddr_in peer_addr;
+    char sock_addr_buf[128];
+    struct sockaddr *peer_addr = &sock_addr_buf;
     ssize_t sent;
     int value = 0;
 
@@ -1135,7 +1165,7 @@ static void sendto_sock (n2n_edge_t *eee, const void * buf,
         return;
 
     // network order socket
-    fill_sockaddr((struct sockaddr *) &peer_addr, sizeof(peer_addr), dest);
+    fill_sockaddr((struct sockaddr *) peer_addr, 128, dest);
 
     // if the connection is tcp, i.e. not the regular sock...
     if(eee->conf.connect_tcp) {
@@ -1148,13 +1178,13 @@ static void sendto_sock (n2n_edge_t *eee, const void * buf,
 
         // prepend packet length...
         uint16_t pktsize16 = htobe16(len);
-        sent = sendto_fd(eee, (uint8_t*)&pktsize16, sizeof(pktsize16), &peer_addr, dest);
+        sent = sendto_fd(eee, (uint8_t*)&pktsize16, sizeof(pktsize16), peer_addr, dest);
 
         if(sent <= 0)
             return;
         // ...before sending the actual data
     }
-    sent = sendto_fd(eee, buf, len, &peer_addr, dest);
+    sent = sendto_fd(eee, buf, len, peer_addr, dest);
 
     // if the connection is tcp, i.e. not the regular sock...
     if(eee->conf.connect_tcp) {
@@ -1934,7 +1964,7 @@ static int find_peer_destination (n2n_edge_t * eee,
 
     if(is_multi_broadcast(mac_address)) {
         traceEvent(TRACE_DEBUG, "multicast or broadcast destination peer, using supernode");
-        memcpy(destination, &(eee->curr_sn->sock), sizeof(struct sockaddr_in));
+        memcpy(destination, &(eee->curr_sn->sock), sizeof(n2n_sock_t));
         return(0);
     }
 
@@ -1960,7 +1990,7 @@ static int find_peer_destination (n2n_edge_t * eee,
     }
 
     if(retval == 0) {
-        memcpy(destination, &(eee->curr_sn->sock), sizeof(struct sockaddr_in));
+        memcpy(destination, &(eee->curr_sn->sock), sizeof(n2n_sock_t));
         traceEvent(TRACE_DEBUG, "p2p peer %s not found, using supernode",
                                 macaddr_str(mac_buf, mac_address));
 
@@ -2257,7 +2287,7 @@ void process_udp (n2n_edge_t *eee, const struct sockaddr *sender_sock, const SOC
 
     if(eee->conf.connect_tcp)
         // TCP expects that we know our comm partner and does not deliver the sender
-        memcpy(&sender, &(eee->curr_sn->sock), sizeof(struct sockaddr_in));
+        memcpy(&sender, &(eee->curr_sn->sock), sizeof(n2n_sock_t));
     else {
         // REVISIT: type conversion back and forth, choose a consistent approach throughout whole code,
         //          i.e. stick with more general sockaddr as long as possible and narrow only if required
@@ -3121,8 +3151,7 @@ static int edge_init_sockets (n2n_edge_t *eee) {
     if(eee->udp_multicast_sock >= 0)
         closesocket(eee->udp_multicast_sock);
 #endif
-
-    eee->udp_mgmt_sock = open_socket(eee->conf.mgmt_port, INADDR_LOOPBACK, 0 /* UDP */);
+    eee->udp_mgmt_sock = open_socket(eee->conf.mgmt_port, &loopback_addr, 0 /* UDP */);
     if(eee->udp_mgmt_sock < 0) {
         traceEvent(TRACE_ERROR, "failed to bind management UDP port %u", eee->conf.mgmt_port);
         return(-2);
@@ -3137,7 +3166,7 @@ static int edge_init_sockets (n2n_edge_t *eee) {
     eee->multicast_peer.addr.v4[2] = 0;
     eee->multicast_peer.addr.v4[3] = 68;
 
-    eee->udp_multicast_sock = open_socket(N2N_MULTICAST_PORT, INADDR_ANY, 0 /* UDP */);
+    eee->udp_multicast_sock = open_socket(N2N_MULTICAST_PORT, &loopback_addr, 0 /* UDP */);
     if(eee->udp_multicast_sock < 0)
         return(-3);
     else {
@@ -3163,8 +3192,9 @@ void edge_init_conf_defaults (n2n_edge_conf_t *conf) {
     char *tmp_string;
 
     memset(conf, 0, sizeof(*conf));
-
-    conf->bind_address = INADDR_ANY; /* any address */
+   
+    //memcpy(&conf->bind_address,&loopback_addr,sizeof(loopback_addr)); /* any address */
+    conf->bind_address.family = PF_INET6;    
     conf->local_port = 0 /* any port */;
     conf->preferred_sock.family = AF_INVALID;
     conf->mgmt_port = N2N_EDGE_MGMT_PORT; /* 5644 by default */

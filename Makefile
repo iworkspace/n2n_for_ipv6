@@ -17,7 +17,7 @@ ifndef CONFIG_HOST
 $(error Please run ./configure)
 endif
 
-CFLAGS+=-I./include
+CFLAGS+=-I./include -g3
 LDFLAGS+=-L.
 
 #Ultrasparc64 users experiencing SIGBUS should try the following gcc options
@@ -29,7 +29,10 @@ ifeq ($(OPENSSL_CFLAGS), 0)
   CFLAGS+=$(shell pkg-config --cflags-only-I openssl)
 endif
 
-WARN=-Wall
+#jia.he
+CFLAGS += -DSKIP_MULTICAST_PEERS_DISCOVERY
+
+WARN=-Wall -w
 CFLAGS+=$(DEBUG) $(OPTIMIZATION) $(WARN) $(OPTIONS) $(PLATOPTS)
 
 # Quick sanity check on our build environment

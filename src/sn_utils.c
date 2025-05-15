@@ -506,7 +506,8 @@ static ssize_t sendto_fd (n2n_sn_t *sss,
     n2n_tcp_connection_t *conn;
 
     sent = sendto(socket_fd, (void *)pktbuf, pktsize, 0 /* flags */,
-                  socket, sizeof(struct sockaddr_in));
+                  socket, socket->sa_family == PF_INET6?sizeof(struct sockaddr_in6):
+		  sizeof(struct sockaddr_in));
 
     if((sent <= 0) && (errno)) {
         char * c = strerror(errno);
@@ -588,10 +589,11 @@ static ssize_t sendto_peer (n2n_sn_t *sss,
 
     n2n_sock_str_t sockbuf;
 
-    if(AF_INET == peer->sock.family) {
+   /* if(AF_INET == peer->sock.family) { */
 
         // network order socket
-        struct sockaddr_in socket;
+        //struct sockaddr_in socket;
+        char socket[256] = {};
         fill_sockaddr((struct sockaddr *)&socket, sizeof(socket), &(peer->sock));
 
         traceEvent(TRACE_DEBUG, "sent %lu bytes to [%s]",
@@ -601,11 +603,11 @@ static ssize_t sendto_peer (n2n_sn_t *sss,
         return sendto_sock(sss,
                            (peer->socket_fd >= 0) ? peer->socket_fd : sss->sock,
                            (const struct sockaddr*)&socket, pktbuf, pktsize);
-    } else {
-        /* AF_INET6 not implemented */
+  /*  } else {
+       // AF_INET6 not implemented 
         errno = EAFNOSUPPORT;
         return -1;
-    }
+    } */
 }
 
 
@@ -778,7 +780,8 @@ int sn_init_defaults (n2n_sn_t *sss) {
     strncpy(sss->version, PACKAGE_VERSION, sizeof(n2n_version_t));
     sss->version[sizeof(n2n_version_t) - 1] = '\0';
     sss->daemon = 1; /* By defult run as a daemon. */
-    sss->bind_address = INADDR_ANY; /* any address */
+    memset(&sss->bind_address,0,sizeof(sss->bind_address)); /* any address */
+    sss->bind_address.family = PF_INET6;
     sss->lport = N2N_SN_LPORT_DEFAULT;
     sss->mport = N2N_SN_MGMT_PORT;
     sss->sock = -1;

@@ -189,41 +189,15 @@ static void help (int level) {
 static int setOption (int optkey, char *_optarg, n2n_sn_t *sss) {
 
     //traceEvent(TRACE_NORMAL, "Option %c = %s", optkey, _optarg ? _optarg : "");
-
+   
     switch(optkey) {
+	//Force ipv6
         case 'p': { /* local-port */
-            char* colon = strpbrk(_optarg, ":");
-            if(colon) { /*ip address:port */
-                *colon = 0;
-                sss->bind_address = ntohl(inet_addr(_optarg));
-                sss->lport = atoi(++colon);
-
-                if(sss->bind_address == INADDR_NONE) {
-                    traceEvent(TRACE_WARNING, "bad address to bind to, binding to any IP address");
-                    sss->bind_address = INADDR_ANY;
-                }
-                if(sss->lport == 0) {
-                    traceEvent(TRACE_WARNING, "bad local port format, defaulting to %u", N2N_SN_LPORT_DEFAULT);
-                    sss->lport = N2N_SN_LPORT_DEFAULT;
-                }
-            } else { /* ip address or port only */
-                char* dot = strpbrk(_optarg, ".");
-                if(dot) { /* ip address only */
-                    sss->bind_address = ntohl(inet_addr(_optarg));
-                    if(sss->bind_address == INADDR_NONE) {
-                        traceEvent(TRACE_WARNING, "bad address to bind to, binding to any IP address");
-                        sss->bind_address = INADDR_ANY;
-                    }
-                } else { /* port only */
-                    sss->lport = atoi(_optarg);
-                    if(sss->lport == 0) {
-                        traceEvent(TRACE_WARNING, "bad local port format, defaulting to %u", N2N_SN_LPORT_DEFAULT);
-                        sss->lport = N2N_SN_LPORT_DEFAULT;
-                    }
-                }
+                sss->lport = atoi(_optarg);
+		memset(&sss->bind_address,0,sizeof(sss->bind_address));
+		sss->bind_address.family = PF_INET6;
+            	break;
             }
-            break;
-        }
 
         case 't': /* mgmt-port */
             sss->mport = atoi(_optarg);
@@ -652,7 +626,7 @@ int main (int argc, char * const argv[]) {
 
     traceEvent(TRACE_DEBUG, "traceLevel is %d", getTraceLevel());
 
-    sss_node.sock = open_socket(sss_node.lport, sss_node.bind_address, 0 /* UDP */);
+    sss_node.sock = open_socket(sss_node.lport, &sss_node.bind_address, 0 /* UDP */);
     if(-1 == sss_node.sock) {
         traceEvent(TRACE_ERROR, "failed to open main socket. %s", strerror(errno));
         exit(-2);
@@ -661,7 +635,7 @@ int main (int argc, char * const argv[]) {
     }
 
 #ifdef N2N_HAVE_TCP
-    sss_node.tcp_sock = open_socket(sss_node.lport, sss_node.bind_address, 1 /* TCP */);
+    sss_node.tcp_sock = open_socket(sss_node.lport, &sss_node.bind_address, 1 /* TCP */);
     if(-1 == sss_node.tcp_sock) {
         traceEvent(TRACE_ERROR, "failed to open auxiliary TCP socket, %s", strerror(errno));
         exit(-2);
@@ -677,7 +651,13 @@ int main (int argc, char * const argv[]) {
     }
 #endif
 
-    sss_node.mgmt_sock = open_socket(sss_node.mport, INADDR_LOOPBACK, 0 /* UDP */);
+    n2n_addr_t loopback_addr = {
+    	.family = PF_INET,
+	.in_addr = {
+		.s_addr = htonl(INADDR_LOOPBACK),
+	}
+    };
+    sss_node.mgmt_sock = open_socket(sss_node.mport, &loopback_addr, 0 /* UDP */);
     if(-1 == sss_node.mgmt_sock) {
         traceEvent(TRACE_ERROR, "failed to open management socket, %s", strerror(errno));
         exit(-2);

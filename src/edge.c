@@ -558,6 +558,7 @@ static int setOption (int optkey, char *optargument, n2n_tuntap_priv_config_t *e
             /* we cannot be sure if this gets parsed before the community name is set.
              * so, only an indicator is set, action is taken later*/
             conf->header_encryption = HEADER_ENCRYPTION_ENABLED;
+            traceEvent(TRACE_WARNING, "----header encryption enabled--\r\n ");
             break;
         }
 
@@ -637,29 +638,21 @@ static int setOption (int optkey, char *optargument, n2n_tuntap_priv_config_t *e
             char* colon = strpbrk(optargument, ":");
             if(colon) { /*ip address:port */
                 *colon = 0;
-                conf->bind_address = ntohl(inet_addr(optargument));
+		//ipv6 first
+		conf->bind_address.family = AF_INET6;
+		if(1!=inet_pton(AF_INET6,optargument,&conf->bind_address.in6_addr) &&
+				(conf->bind_address.family = AF_INET) &&
+				1!=inet_pton(AF_INET,optargument,&conf->bind_address.in_addr)){
+
+                    		traceEvent(TRACE_WARNING, "bad address to bind to, binding to any IP address");
+		    		memset(&conf->bind_address,0,sizeof(conf->bind_address));
+				conf->bind_address.family = AF_INET6;
+		    	
+		}
                 conf->local_port = atoi(++colon);
 
-                if(conf->bind_address == INADDR_NONE) {
-                    traceEvent(TRACE_WARNING, "bad address to bind to, binding to any IP address");
-                    conf->bind_address = INADDR_ANY;
-                }
                 if(conf->local_port == 0) {
                     traceEvent(TRACE_WARNING, "bad local port format, using OS assigned port");
-                }
-            } else { /* ip address or port only */
-                char* dot = strpbrk(optargument, ".");
-                if(dot) { /* ip address only */
-                    conf->bind_address = ntohl(inet_addr(optargument));
-                    if(conf->bind_address == INADDR_NONE) {
-                        traceEvent(TRACE_WARNING, "bad address to bind to, binding to any IP address");
-                        conf->bind_address = INADDR_ANY;
-                    }
-                } else { /* port only */
-                    conf->local_port = atoi(optargument);
-                     if(conf->local_port == 0) {
-                        traceEvent(TRACE_WARNING, "bad local port format, using OS assigned port");
-                    }
                 }
             }
             break;

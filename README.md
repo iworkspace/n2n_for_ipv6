@@ -3,17 +3,61 @@
 
 # n2n
 
-n2n is a light VPN software which makes it easy to create virtual networks bypassing intermediate firewalls.
-
-In order to start using n2n, two elements are required:
-
-- A _supernode_: it allows edge nodes to announce and discover other nodes. It must have a port publicly accessible on internet.
-- _edge_ nodes: the nodes which will be a part of the virtual networks
-
-A virtual network shared between multiple edge nodes in n2n is called a _community_. A single supernode can relay multiple communities and a single computer can be part of multiple communities at the same time. An encryption key can be used by the edge nodes to encrypt the packets within their community.
-
-n2n tries to establish a direct peer-to-peer connection via udp between the edge nodes when possible. When this is not possible (usually due to special NAT devices), the supernode is also used to relay the packets.
-
+## Ipv6 support
+    1. Background and Issue Description
+    A common requirement is to run the n2n VPN over public IPv6 networks. However, the current version of n2n appears to bind only to IPv4 public addresses by default. This creates connectivity issues in scenarios where:
+    
+    Edge nodes reside behind IPv6 gateways.
+    
+    Firewall rules on IPv6 gateways block direct communication between devices with public IPv6 addresses.
+    
+    The server environment relies on dynamic IPv6 addresses (e.g., a testing setup using China Mobile’s optical modem in bridge mode with DDNS mapping via a free IPv6 domain from meibu.com).
+    
+    A simplified test case demonstrates that two devices with public IPv6 addresses cannot establish a connection through n2n, despite proper IPv6 routing and DDNS configuration.
+    
+    2. Key Challenges
+    Socket Binding Limitation:
+    The n2n codebase currently binds sockets to IPv4 addresses (AF_INET). To support IPv6, sockets should bind to AF_INET6 with the IPV6_V6ONLY option set to 0, allowing dual-stack operation (simultaneous IPv4 and IPv6 support).
+    
+    Dynamic IPv6 Address Management:
+    
+    IPv6 addresses are long, dynamic, and challenging to memorize.
+    
+    Devices may have multiple IPv6 addresses (e.g., temporary, link-local, or privacy addresses).
+    
+    Reliable detection of the public IPv6 address is critical. Tools like 6.ipw.cn can help identify the primary public IPv6 address.
+    
+    Firewall and Gateway Configuration:
+    
+    IPv6 gateways (e.g., consumer routers) often enforce strict default firewall rules.
+    
+    Manual configuration is required to allow n2n traffic (UDP ports, typically 7654/7655).
+    
+    3. Limitations and Future Optimizations
+    Code Robustness: The dual-stack binding approach may require additional error handling for multi-homed systems.
+    
+    IPv6 Address Selection: Prioritize stable or semi-static IPv6 addresses (e.g., DHCPv6-prefixed addresses).
+    
+    Integration with n2n Configuration: Simplify user input by removing IPv4/IPv6-specific parameters (e.g., bind to all addresses by default).
+    
+    4. Conclusion
+    Enabling n2n on IPv6 public networks involves addressing socket binding limitations, dynamic address management, and firewall configurations. While the provided solutions are functional, further optimizations (e.g., automated address selection, enhanced error handling) are encouraged for production environments.
+    
+    Contributions Welcome!
+    If you have improvements to the IPv6 implementation, submit a pull request to the n2n GitHub repository.
+    
+## n2n 
+    n2n is a light VPN software which makes it easy to create virtual networks bypassing intermediate firewalls.
+    
+    In order to start using n2n, two elements are required:
+    
+    - A _supernode_: it allows edge nodes to announce and discover other nodes. It must have a port publicly accessible on internet.
+    - _edge_ nodes: the nodes which will be a part of the virtual networks
+    
+    A virtual network shared between multiple edge nodes in n2n is called a _community_. A single supernode can relay multiple communities and a single computer can be part of multiple communities at the same time. An encryption key can be used by the edge nodes to encrypt the packets within their community.
+    
+    n2n tries to establish a direct peer-to-peer connection via udp between the edge nodes when possible. When this is not possible (usually due to special NAT devices), the supernode is also used to relay the packets.
+    
 
 ## Quick Setup
 

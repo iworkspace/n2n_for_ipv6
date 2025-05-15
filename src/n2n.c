@@ -26,6 +26,7 @@
 #include <time.h>            // for time, localtime, strftime
 #include "config.h"          // for PACKAGE_BUILDDATE, PACKA...
 #include "n2n.h"
+#include "n2n_define.h"
 #include "random_numbers.h"  // for n2n_rand
 #include "sn_selection.h"    // for sn_selection_criterion_default
 #include "uthash.h"          // for UT_hash_handle, HASH_DEL, HASH_ITER, HAS...
@@ -47,13 +48,16 @@
 
 /* ************************************** */
 
-SOCKET open_socket (int local_port, in_addr_t address, int type /* 0 = UDP, TCP otherwise */) {
+SOCKET open_socket (int local_port, n2n_addr_t *address, int type /* 0 = UDP, TCP otherwise */) {
 
     SOCKET sock_fd;
-    struct sockaddr_in local_address;
+    struct sockaddr_in v4_addr;
+    struct sockaddr_in6 v6_addr;
     int sockopt;
+    struct sockaddr *sock_addr;
+    int socklen;
 
-    if((int)(sock_fd = socket(PF_INET, ((type == 0) ? SOCK_DGRAM : SOCK_STREAM) , 0)) < 0) {
+    if((int)(sock_fd = socket(address->family, ((type == 0) ? SOCK_DGRAM : SOCK_STREAM) , 0)) < 0) {
         traceEvent(TRACE_ERROR, "Unable to create socket [%s][%d]\n",
                    strerror(errno), sock_fd);
         return(-1);
@@ -66,12 +70,28 @@ SOCKET open_socket (int local_port, in_addr_t address, int type /* 0 = UDP, TCP 
     sockopt = 1;
     setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&sockopt, sizeof(sockopt));
 
-    memset(&local_address, 0, sizeof(local_address));
-    local_address.sin_family = AF_INET;
-    local_address.sin_port = htons(local_port);
-    local_address.sin_addr.s_addr = htonl(address);
 
-    if(bind(sock_fd,(struct sockaddr*) &local_address, sizeof(local_address)) == -1) {
+    if(address->family == PF_INET){
+    	sock_addr = &v4_addr;
+	memset(sock_addr,0,sizeof(v4_addr));
+	v4_addr.sin_family = AF_INET;
+        v4_addr.sin_port = htons(local_port);
+        memcpy(&v4_addr.sin_addr.s_addr, &address->in_addr,sizeof(address->in_addr));
+	socklen = sizeof(v4_addr);
+    }else if(address->family == PF_INET6){
+    	sock_addr = &v6_addr;
+	memset(sock_addr,0,sizeof(v6_addr));
+	v6_addr.sin6_family = AF_INET6;
+        v6_addr.sin6_port = htons(local_port);
+        memcpy(&v6_addr.sin6_addr, &address->in6_addr,sizeof(address->in6_addr));
+	socklen = sizeof(v6_addr);
+	int no = 0;
+    	if (setsockopt(sock_fd, IPPROTO_IPV6, IPV6_V6ONLY, &no, sizeof(no)) < 0) { 
+		printf("disable  ipv6_ipv6only failed.\r\n ");
+	}
+    }
+
+       if(bind(sock_fd,sock_addr, socklen) == -1) {
         traceEvent(TRACE_ERROR, "Bind error on local port %u [%s]\n", local_port, strerror(errno));
         return(-1);
     }
@@ -289,49 +309,58 @@ int supernode2sock (n2n_sock_t *sn, const n2n_sn_name_t addrIn) {
     char *supernode_port;
     int rv = 0;
     int nameerr;
-    const struct addrinfo aihints = {0, PF_INET, 0, 0, 0, NULL, NULL, NULL};
+    struct addrinfo aihints = {0, 0, 0, 0, 0, NULL, NULL, NULL};
     struct addrinfo * ainfo = NULL;
     struct sockaddr_in * saddr;
+    struct sockaddr_in6 * saddrv6;
+    char buf[128];
 
     sn->family = AF_INVALID;
 
     memcpy(addr, addrIn, N2N_EDGE_SN_HOST_SIZE);
     supernode_host = strtok(addr, ":");
 
-    if(supernode_host) {
-        supernode_port = strtok(NULL, ":");
-        if(supernode_port) {
-            sn->port = atoi(supernode_port);
-            nameerr = getaddrinfo(supernode_host, NULL, &aihints, &ainfo);
-            if(0 == nameerr) {
-               /* ainfo s the head of a linked list if non-NULL. */
-                if(ainfo && (PF_INET == ainfo->ai_family)) {
-                    /* It is definitely and IPv4 address -> sockaddr_in */
-                    saddr = (struct sockaddr_in *)ainfo->ai_addr;
-                    memcpy(sn->addr.v4, &(saddr->sin_addr.s_addr), IPV4_SIZE);
-                    sn->family = AF_INET;
-                    traceEvent(TRACE_INFO, "supernode2sock successfully resolves supernode IPv4 address for %s", supernode_host);
-                    rv = 0;
-                } else {
-                    /* Should only return IPv4 addresses due to aihints. */
-                    traceEvent(TRACE_WARNING, "supernode2sock fails to resolve supernode IPv4 address for %s", supernode_host);
-                    rv = -1;
-                }
-                freeaddrinfo(ainfo); /* free everything allocated by getaddrinfo(). */
-            } else {
-                traceEvent(TRACE_WARNING, "supernode2sock fails to resolve supernode host %s, %d: %s", supernode_host, nameerr, gai_strerror(nameerr));
-                rv = -2;
-            }
-        } else {
-            traceEvent(TRACE_WARNING, "supernode2sock sees malformed supernode parameter (-l <host:port>) %s", addrIn);
-            rv = -3;
-        }
-    } else {
-        traceEvent(TRACE_WARNING, "supernode2sock sees malformed supernode parameter (-l <host:port>) %s",
-                   addrIn);
-        rv = -4;
+    if(!supernode_host) { 
+   	return -1; 
     }
 
+    supernode_port = strtok(NULL, ":");
+    if(!supernode_port) { 
+   	return -1; 
+    }
+
+    sn->port = atoi(supernode_port);
+    //ipv6 first
+    aihints.ai_family = PF_INET6;
+    nameerr = getaddrinfo(supernode_host, NULL, &aihints, &ainfo);
+    if(0 == nameerr && ainfo && ainfo->ai_family == PF_INET6) {
+        sn->family = AF_INET6;
+        saddrv6 = (struct sockaddr_in6 *)ainfo->ai_addr;
+        memcpy(sn->addr.v6, &(saddrv6->sin6_addr), IPV6_SIZE);
+	inet_ntop(AF_INET6,&saddrv6->sin6_addr,buf,sizeof(buf));
+        traceEvent(TRACE_INFO, "supernode2sock successfully resolves supernode IPv6 address for %s -> %s", supernode_host,buf);
+    	freeaddrinfo(ainfo); /* free everything allocated by getaddrinfo(). */
+	return 0;
+    }
+
+    freeaddrinfo(ainfo); /* free everything allocated by getaddrinfo(). */
+
+    //ipv4 fallthoght todo: ipv4 standby.
+    memset(&aihints,0,sizeof(aihints));
+    aihints.ai_family = PF_INET;
+    nameerr = getaddrinfo(supernode_host, NULL, &aihints, &ainfo);
+    if(0 == nameerr && ainfo && ainfo->ai_family == PF_INET) {
+        sn->family = AF_INET;
+        saddr = (struct sockaddr_in *)ainfo->ai_addr;
+        memcpy(sn->addr.v4, &(saddr->sin_addr.s_addr), IPV4_SIZE);
+	inet_ntop(AF_INET,&saddr->sin_addr.s_addr,buf,sizeof(buf));
+        traceEvent(TRACE_INFO, "supernode2sock successfully resolves supernode IPv4 address for %s -> %s", supernode_host,buf);
+    	freeaddrinfo(ainfo); /* free everything allocated by getaddrinfo(). */
+	return 0;
+    }
+
+    traceEvent(TRACE_INFO, "supernode2sock sees malformed supernode parameter (-l <host:port>) %s",
+                   addrIn);
     ainfo = NULL;
 
     return rv;
